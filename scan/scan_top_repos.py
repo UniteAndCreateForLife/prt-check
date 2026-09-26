@@ -86,7 +86,9 @@ def raw(url: str) -> str:
                 return response.read(2_000_000).decode("utf-8", "replace")
         except (urllib.error.URLError, TimeoutError):
             time.sleep(5 * (attempt + 1))
-    return ""
+    # Raise rather than return "": an empty text reads as a workflow without triggers, which would turn a
+    # download failure into "fixed" or "trigger removed". scan() records the error for the repository.
+    raise RuntimeError(f"could not download {url}")
 
 
 def scan(repo: dict) -> dict:

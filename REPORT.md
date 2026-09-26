@@ -6,7 +6,7 @@
 
 - **269 of 1,000 (26.9%)** run at least one workflow on `pull_request_target` (540 workflow files). Unless their maintainers allow the trigger in an Actions policy, those workflows stop running on 2026-11-02.
 - **9 (0.9%)** check out fork pull request code in a privileged workflow, with an `actions/checkout` that has the new guard and no condition that keeps forks out. Since 2026-07-20 the guard refuses those checkouts, so the steps fail for pull requests from forks. Label-gated ones fail when the label is added.
-- **3** check out fork code in a privileged workflow with `actions/checkout` pinned to a version or commit from before the guard. The guard doesn't apply to them, so the fork's code is checked out where the workflow's token and secrets are. They are the most urgent to fix, and this report does not name them.
+- **3** check out fork code in a privileged workflow with `actions/checkout` pinned to a version or commit from before the guard. The guard doesn't apply to them, so the fork's code is checked out where the workflow's token and secrets are. Whether that is safe depends on what the later steps do with those files: the ones we reviewed by hand only read them as data or wait for a maintainer's approval. This report does not name them.
 - **4** opted in with `allow-unsafe-pr-checkout: true`: a deliberate decision, safe only if no later step executes the fork's files.
 - **9** fetch pull request code with `git fetch ...pull/...` or `gh pr checkout` in a privileged workflow. That path bypasses the new guard in `actions/checkout`.
 - **8** run an AI or review action on `pull_request_target`. Those reviewers go quiet on 2026-11-02 unless the trigger is allowed.

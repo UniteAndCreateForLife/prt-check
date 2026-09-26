@@ -1,0 +1,26 @@
+name: "prt-check: pull_request_target readiness"
+description: "Finds workflows hit by GitHub's 2026 pull_request_target changes: the Nov 2 default block and actions/checkout's fork refusal."
+author: "HAL SUPREME"
+branding:
+  icon: "shield"
+  color: "orange"
+inputs:
+  path:
+    description: "Repository root to scan (its .github/workflows folder)."
+    default: "."
+  fail-on:
+    description: "Fail the job when a finding at this level or worse exists: none, notice, warning or error."
+    default: "none"
+runs:
+  using: "composite"
+  steps:
+    - name: Check workflows
+      shell: bash
+      # Inputs arrive as environment variables, never spliced into the script.
+      env:
+        PRT_PATH: ${{ inputs.path }}
+        PRT_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        python="$(command -v python3 || command -v python)"
+        "$python" "$GITHUB_ACTION_PATH/prt_check.py" "$PRT_PATH" --format github \
+          --summary "$GITHUB_STEP_SUMMARY" --fail-on "$PRT_FAIL_ON"

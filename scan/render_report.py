@@ -67,7 +67,7 @@ def render(data: dict) -> str:
         "and raw.githubusercontent.com. No workflow was run, and nothing was written anywhere.",
         "- Each file went through `prt_check.py`, which reads YAML line by line. "
         "[README](README.md#what-it-reports) lists the codes, and the tests show the layouts it understands.",
-        "- Every repository behind the fork-checkout numbers was reviewed by hand, and the checker was corrected "
+        "- Every repository behind the second and third numbers was reviewed by hand, and the checker was corrected "
         "wherever the review found it wrong: job conditions, Dependabot-only jobs, `workflow_run` upstreams and "
         "branch filters, and commit pins resolved to exact `actions/checkout` releases.",
         "- Actions policies (repository, organization or enterprise) are not visible from outside, so some of "

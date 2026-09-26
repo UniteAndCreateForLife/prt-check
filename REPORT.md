@@ -44,7 +44,7 @@ AI and review actions on the trigger:
 - Selection: the 1,000 most-starred public, non-fork, non-archived repositories, from GitHub's repository search on 2026-09-26. 809 of them have workflow files (9,328 files in total). 0 could not be read.
 - Only `.github/workflows/*.yml` and `*.yaml` on the default branch were read, through the GitHub API and raw.githubusercontent.com. No workflow was run, and nothing was written anywhere.
 - Each file went through `prt_check.py`, which reads YAML line by line. [README](README.md#what-it-reports) lists the codes, and the tests show the layouts it understands.
-- Every repository behind the fork-checkout numbers was reviewed by hand, and the checker was corrected wherever the review found it wrong: job conditions, Dependabot-only jobs, `workflow_run` upstreams and branch filters, and commit pins resolved to exact `actions/checkout` releases.
+- Every repository behind the second and third numbers was reviewed by hand, and the checker was corrected wherever the review found it wrong: job conditions, Dependabot-only jobs, `workflow_run` upstreams and branch filters, and commit pins resolved to exact `actions/checkout` releases.
 - Actions policies (repository, organization or enterprise) are not visible from outside, so some of these repositories may already allow `pull_request_target` and keep running it after 2026-11-02. The numbers count workflows that depend on the trigger, not workflows that will certainly stop.
 
 ## What to do

@@ -155,3 +155,23 @@ def test_a_repository_without_workflows_is_not_affected(tmp_path, capsys):
 def test_remote_names_are_validated():
     with pytest.raises(ValueError):
         P.read_remote("../etc/passwd")
+
+
+def test_a_step_or_job_that_skips_forks_does_not_fail():
+    step_guard = checkout_workflow(
+        "          ref: ${{ github.event.pull_request.head.sha }}\n",
+        after="      - run: echo ok\n").replace(
+        "      - uses: actions/checkout@v4\n",
+        "      - if: github.event.pull_request.head.repo.full_name == github.repository\n"
+        "        uses: actions/checkout@v4\n")
+    assert "PRT002" not in [c for c, _, _ in codes(step_guard)]
+    job_guard = ("on: pull_request_target\njobs:\n  preview:\n"
+                 "    if: ${{ github.event.pull_request.head.repo.fork == false }}\n"
+                 "    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n"
+                 "          ref: ${{ github.event.pull_request.head.sha }}\n")
+    assert "PRT002" not in [c for c, _, _ in codes(job_guard)]
+    other_job = ("on: pull_request_target\njobs:\n  a:\n    if: github.event.pull_request.head.repo.fork == false\n"
+                 "    runs-on: ubuntu-latest\n    steps:\n      - run: echo a\n  b:\n    runs-on: ubuntu-latest\n"
+                 "    steps:\n      - uses: actions/checkout@v4\n        with:\n"
+                 "          ref: ${{ github.event.pull_request.head.sha }}\n")
+    assert "PRT002" in [c for c, _, _ in codes(other_job)], "a guard on another job does not count"

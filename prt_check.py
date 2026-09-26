@@ -181,6 +181,31 @@ def _value(block: List[Tuple[int, str]], key: str) -> Tuple[str, int]:
     return "", 0
 
 
+# A condition that skips the step or job for fork pull requests, so the checkout never meets fork code.
+SAME_REPO_GUARD_RE = re.compile(
+    r"head\.repo\.full_name\s*==\s*github\.repository|github\.repository\s*==\s*github\.event\.pull_request"
+    r"\.head\.repo\.full_name|head\.repo\.fork\s*==\s*false|!\s*github\.event\.pull_request\.head\.repo\.fork"
+    r"|head_repository\.full_name\s*==\s*github\.repository", re.I)
+
+
+def _guarded_for_forks(lines: List[str], block: List[Tuple[int, str]]) -> bool:
+    """Whether the step, or the job it belongs to, only runs for same-repository pull requests."""
+    if any(SAME_REPO_GUARD_RE.search(_strip_comment(raw)) for _, raw in block):
+        return True
+    step_indent = _indent(lines[block[0][0]])
+    for number in range(block[0][0] - 1, -1, -1):
+        text = _strip_comment(lines[number])
+        if not text.strip():
+            continue
+        if _indent(text) < step_indent and re.match(r"^\s*if\s*:", text) and SAME_REPO_GUARD_RE.search(text):
+            return True
+        if re.match(r"^ {0,4}[A-Za-z0-9_-]+\s*:\s*$", text) and _indent(text) <= 4 and number < block[0][0] - 1:
+            # Reached the job's own key (two or four spaces under `jobs:`): stop.
+            if _indent(text) <= 2 or not text.lstrip().startswith(("steps", "runs-on", "if", "permissions")):
+                break
+    return False
+
+
 def _later_steps(lines: List[str], block_end: int, item_indent: int) -> bool:
     """Whether the job runs more steps after this one (same list, same indent)."""
     for raw in lines[block_end:]:
@@ -233,6 +258,8 @@ def analyse(name: str, text: str) -> WorkflowReport:
             if not (FORK_REF_RE.search(ref) or FORK_REPO_RE.search(repo)):
                 continue
             where = ref_line or repo_line or number + 1
+            if _guarded_for_forks(lines, block):
+                continue
             if opted_in.lower() != "true":
                 add(where, "error", "PRT002",
                     f"Checks out pull request code ({target}) in a {'/'.join(privileged)} workflow. Since "

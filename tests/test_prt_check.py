@@ -180,7 +180,9 @@ def test_a_step_or_job_that_skips_forks_does_not_fail():
 @pytest.mark.parametrize("spec, line, expected", [
     ("v1", "", False), ("v2", "", True), ("v4", "", True), ("v4.2.2", "", False), ("v4.4.0", "", True),
     ("v7.0.0", "", False), ("v7.0.1", "", True), ("v8", "", True), ("main", "", True),
-    ("11d5960a326750d5838078e36cf38b85af677262", "uses: actions/checkout@11d5960a3 ", None),
+    ("11d5960a326750d5838078e36cf38b85af677262", "uses: actions/checkout@11d5960a3 ", True),   # v4.4.0
+    ("34e114876b0b11c390a56381ad16ebd13914f8d5", "uses: actions/checkout@34e11487 # v4", False),  # v4.3.1
+    ("0123456789abcdef0123456789abcdef01234567", "uses: actions/checkout@01234567", None),
     ("3d3c42e5aac5ba805825da76410c181273ba90b1", "uses: actions/checkout@3d3c42e5 # v7.0.1", True),
     ("b4ffde65f46336ab88eb53be808477a3936bae11", "uses: actions/checkout@b4ffde65 # v4.1.1", False),
 ])
@@ -213,3 +215,75 @@ def test_workflow_run_after_a_push_only_workflow_never_meets_fork_code():
 def test_block_list_of_upstream_workflows():
     lines = "on:\n  workflow_run:\n    workflows:\n      - CI\n      - \"Docs build\"\n    types: [completed]\n".split("\n")
     assert P.upstream_workflows(lines) == ["CI", "Docs build"]
+
+
+def _prt_job(condition_lines):
+    return ("on:\n  pull_request:\n  pull_request_target:\njobs:\n  j:\n    runs-on: ubuntu-latest\n" + condition_lines +
+            "    steps:\n      - uses: actions/checkout@v4\n        with:\n"
+            "          ref: ${{ github.event.pull_request.head.sha }}\n")
+
+
+@pytest.mark.parametrize("condition, fails", [
+    ("    if: github.event.pull_request.user.login == 'dependabot[bot]'\n", False),
+    ("    if: github.event_name == 'pull_request'\n", False),
+    ("    if: >\n      (github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'docs'))\n"
+     "      || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)\n",
+     True),
+    ("    if: |\n      github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository\n",
+     False),
+    ("    if: contains(github.event.pull_request.labels.*.name, 'safe to test')\n", True),
+])
+def test_job_conditions(condition, fails):
+    assert ("PRT002" in [c for c, _, _ in codes(_prt_job(condition))]) is fails
+
+
+def test_a_commit_pin_with_only_a_major_version_comment_is_unknown_unless_it_is_a_known_release():
+    assert P.checkout_refuses("0123456789abcdef0123456789abcdef01234567", "uses: actions/checkout@0123 # v6") is None
+    assert P.checkout_refuses("df4cb1c069e1874edd31b4311f1884172cec0e10", "uses: actions/checkout@df4cb1c0 # v6") is False
+
+
+def test_a_branch_filtered_workflow_run_is_not_counted_as_failing_for_every_fork():
+    build = "name: CI\non:\n  pull_request:\n  push:\njobs: {}\n"
+    deploy = ("on:\n  workflow_run:\n    workflows: [CI]\n    types: [completed]\n    branches: [master]\njobs:\n  d:\n"
+              "    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n"
+              "          ref: ${{ github.event.workflow_run.head_sha || github.sha }}\n")
+    reports = P.analyse_all([(".github/workflows/ci.yml", build), (".github/workflows/deploy.yml", deploy)])
+    assert [f.code for r in reports for f in r.findings] == []
+
+
+def test_a_job_condition_above_other_job_keys_still_counts():
+    build = "name: Python-Integration\non:\n  pull_request:\njobs: {}\n"
+    verify = ("on:\n  workflow_run:\n    workflows: [\"Python-Integration\"]\n    types: [completed]\njobs:\n  build:\n"
+              "    if: >\n      github.event_name == 'workflow_run' &&\n"
+              "      github.event.workflow_run.head_repository.full_name == github.repository\n"
+              "    name: Build\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: docs\n"
+              "    steps:\n      - uses: actions/checkout@v4\n        with:\n"
+              "          ref: ${{ github.event.workflow_run.head_sha }}\n")
+    reports = P.analyse_all([(".github/workflows/i.yml", build), (".github/workflows/v.yml", verify)])
+    assert [f.code for r in reports for f in r.findings] == []
+
+
+def test_four_space_indented_workflows():
+    text = ("on: pull_request_target\njobs:\n    a:\n        if: github.event.pull_request.head.repo.fork == false\n"
+            "        runs-on: ubuntu-latest\n        steps:\n            - uses: actions/checkout@v4\n              with:\n"
+            "                  ref: ${{ github.event.pull_request.head.sha }}\n")
+    assert [c for c, _, _ in codes(text)] == ["PRT001"]
+
+
+def test_a_workflow_run_limited_to_push_runs_never_meets_fork_code():
+    test = "name: test\non:\n  push:\n  pull_request:\njobs: {}\n"
+    docker = ("on:\n  workflow_run:\n    workflows: [ test ]\n    types: [ completed ]\njobs:\n  build:\n"
+              "    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' "
+              "&& github.event.workflow_run.event == 'push') }}\n    runs-on: ubuntu-latest\n    steps:\n"
+              "      - uses: actions/checkout@v4\n        with:\n          ref: ${{ github.event.workflow_run.head_sha || github.sha }}\n")
+    reports = P.analyse_all([(".github/workflows/test.yml", test), (".github/workflows/docker.yml", docker)])
+    assert [f.code for r in reports for f in r.findings] == []
+
+
+def test_nested_or_inside_parentheses_keeps_its_guard():
+    condition = ("${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && "
+                 "github.event.workflow_run.event == 'push' && (github.event.workflow_run.head_branch == 'main' || "
+                 "github.event.workflow_run.head_branch == 'master')) }}")
+    assert P._skips_fork_code(condition, ["workflow_run"]) is True
+    assert P._skips_fork_code("github.event_name == 'workflow_dispatch' || github.event.workflow_run.head_branch == 'main'",
+                              ["workflow_run"]) is False

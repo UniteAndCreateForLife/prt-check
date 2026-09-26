@@ -29,8 +29,9 @@ def render(data: dict) -> str:
         f"workflow on `pull_request_target` ({data['pull_request_target_workflow_files']} workflow files). Unless "
         "their maintainers allow the trigger in an Actions policy, those workflows stop running on 2026-11-02.",
         f"- **{data['failing_for_fork_prs']} ({data['failing_for_fork_prs_pct']}%)** check out fork pull request code "
-        "in a privileged workflow without the new opt-in. Since 2026-07-20 `actions/checkout` refuses that, so "
-        "these steps already fail for every pull request from a fork.",
+        "in a privileged workflow, with an `actions/checkout` that has the new guard and no condition that keeps "
+        "forks out. Since 2026-07-20 the guard refuses those checkouts, so the steps fail for pull requests from "
+        "forks. Label-gated ones fail when the label is added.",
         f"- **{data.get('fork_code_with_old_checkout_pin', 0)}** check out fork code in a privileged workflow with "
         "`actions/checkout` pinned to a version or commit from before the guard. The guard doesn't apply to "
         "them, so the fork's code is checked out where the workflow's token and secrets are. They are the most "
@@ -58,13 +59,17 @@ def render(data: dict) -> str:
         "",
         "## Method",
         "",
-        f"- Selection: {data['selection']}, from GitHub's repository search on {scanned.isoformat()}. "
+        f"- Selection: the {n:,} most-starred public, non-fork, non-archived repositories, from GitHub's repository "
+        f"search on {scanned.isoformat()}. "
         f"{data['with_workflows']:,} of them have workflow files ({data['workflow_files']:,} files in total). "
         f"{data.get('unreadable', 0)} could not be read.",
         "- Only `.github/workflows/*.yml` and `*.yaml` on the default branch were read, through the GitHub API "
         "and raw.githubusercontent.com. No workflow was run, and nothing was written anywhere.",
         "- Each file went through `prt_check.py`, which reads YAML line by line. "
         "[README](README.md#what-it-reports) lists the codes, and the tests show the layouts it understands.",
+        "- Every repository behind the fork-checkout numbers was reviewed by hand, and the checker was corrected "
+        "wherever the review found it wrong: job conditions, Dependabot-only jobs, `workflow_run` upstreams and "
+        "branch filters, and commit pins resolved to exact `actions/checkout` releases.",
         "- Actions policies (repository, organization or enterprise) are not visible from outside, so some of "
         "these repositories may already allow `pull_request_target` and keep running it after 2026-11-02. The "
         "numbers count workflows that depend on the trigger, not workflows that will certainly stop.",

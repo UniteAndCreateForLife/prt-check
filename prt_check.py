@@ -188,22 +188,88 @@ SAME_REPO_GUARD_RE = re.compile(
     r"|head_repository\.full_name\s*==\s*github\.repository", re.I)
 
 
-def _guarded_for_forks(lines: List[str], block: List[Tuple[int, str]]) -> bool:
-    """Whether the step, or the job it belongs to, only runs for same-repository pull requests."""
-    if any(SAME_REPO_GUARD_RE.search(_strip_comment(raw)) for _, raw in block):
-        return True
-    step_indent = _indent(lines[block[0][0]])
+# Dependabot and Renovate open pull requests from branches of the same repository.
+BOT_ONLY_RE = re.compile(
+    r"(?:pull_request\.user\.login|github\.actor|github\.triggering_actor)\s*==\s*['\"](?:dependabot|renovate)\[bot\]",
+    re.I)
+EVENT_EQ_RE = re.compile(r"github\.event_name\s*==\s*['\"]([a-z_]+)['\"]", re.I)
+RUN_EVENT_EQ_RE = re.compile(r"github\.event\.workflow_run\.event\s*==\s*['\"]([a-z_]+)['\"]", re.I)
+
+
+def _condition(lines: List[str], number: int) -> str:
+    """The full text of the `if:` on this line, including a `|` or `>` block that continues below it."""
+    text = _strip_comment(lines[number])
+    inline = re.sub(r"^\s*(?:-\s+)?if\s*:\s*", "", text)
+    if inline.strip() not in ("|", ">", "|-", ">-", "|+", ">+"):
+        return inline
+    body, depth = [], _indent(text)
+    for below in lines[number + 1:]:
+        part = _strip_comment(below)
+        if part.strip() and _indent(part) <= depth:
+            break
+        body.append(part.strip())
+    return " ".join(body)
+
+
+def _skips_fork_code(condition: str, privileged: List[str]) -> bool:
+    """Whether a step or job condition keeps fork pull request code out of the privileged run. Every `||`
+    branch must require a same-repository PR, a Dependabot/Renovate PR, or only non-privileged events: in
+    `(pull_request_target && label) || (pull_request && same repo)` the first branch still admits forks."""
+    text = condition.replace("${{", "").replace("}}", "")
+    branches, depth, part, i = [], 0, "", 0
+    while i < len(text):                     # split on `||` outside parentheses only
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+        if text.startswith("||", i) and depth == 0:
+            branches.append(part)
+            part, i = "", i + 2
+            continue
+        part += text[i]
+        i += 1
+    branches = [b for b in branches + [part] if b.strip()]
+
+    def branch_skips(branch: str) -> bool:
+        if SAME_REPO_GUARD_RE.search(branch) or BOT_ONLY_RE.search(branch):
+            return True
+        triggering = {e.lower() for e in RUN_EVENT_EQ_RE.findall(branch)}
+        if triggering and not triggering & {"pull_request", "pull_request_target"}:
+            return True                      # e.g. workflow_run.event == 'push': never a fork's run
+        events = {e.lower() for e in EVENT_EQ_RE.findall(branch)}
+        return bool(events) and not events & set(privileged)
+
+    return bool(branches) and all(branch_skips(b) for b in branches)
+
+
+def _guarded_for_forks(lines: List[str], block: List[Tuple[int, str]], privileged: List[str]) -> bool:
+    """Whether the step, or the job it belongs to, never checks out fork code in a privileged run."""
+    for number, raw in block:
+        if re.match(r"^\s*(?:-\s+)?if\s*:", _strip_comment(raw)) and _skips_fork_code(_condition(lines, number),
+                                                                                        privileged):
+            return True
+    step_indent, job_indent = _indent(lines[block[0][0]]), _job_indent(lines)
     for number in range(block[0][0] - 1, -1, -1):
         text = _strip_comment(lines[number])
         if not text.strip():
             continue
-        if _indent(text) < step_indent and re.match(r"^\s*if\s*:", text) and SAME_REPO_GUARD_RE.search(text):
+        if _indent(text) <= job_indent:
+            break                            # the job's own key: its conditions are all below it
+        if (_indent(text) < step_indent and re.match(r"^\s*if\s*:", text)
+                and _skips_fork_code(_condition(lines, number), privileged)):
             return True
-        if re.match(r"^ {0,4}[A-Za-z0-9_-]+\s*:\s*$", text) and _indent(text) <= 4 and number < block[0][0] - 1:
-            # Reached the job's own key (two or four spaces under `jobs:`): stop.
-            if _indent(text) <= 2 or not text.lstrip().startswith(("steps", "runs-on", "if", "permissions")):
-                break
     return False
+
+
+def _job_indent(lines: List[str]) -> int:
+    """How far job keys are indented under `jobs:` (two spaces in most files)."""
+    for number, raw in enumerate(lines):
+        if re.match(r"^jobs\s*:\s*$", _strip_comment(raw)):
+            for below in lines[number + 1:]:
+                text = _strip_comment(below)
+                if text.strip():
+                    return _indent(text)
+    return 2
 
 
 def _later_steps(lines: List[str], block_end: int, item_indent: int) -> bool:
@@ -219,6 +285,25 @@ def _later_steps(lines: List[str], block_end: int, item_indent: int) -> bool:
     return False
 
 
+# actions/checkout release commits (from its tags, 2026-09-26), so commit pins resolve to exact versions.
+CHECKOUT_RELEASES = {
+    "af513c7a0160": "1.0.0", "0b496e91ec7a": "1.1.0", "50fbc622fc4e": "1.2.0", "722adc63f1aa": "2.0.0",
+    "01aecccf739c": "2.1.0", "86f86b36ef15": "2.1.1", "aabbfeb2ce60": "2.2.0", "b4483adec309": "2.3.0",
+    "28c7f3d2b516": "2.3.1", "2036a08e25fa": "2.3.2", "a81bbbf8298c": "2.3.3", "5a4ac9002d0b": "2.3.4",
+    "1e204e9a9253": "2.3.5", "ec3a7ce11313": "2.4.0", "f25a3a9f25bd": "2.4.1", "7884fcad6b5d": "2.4.2",
+    "e2f20e631ae6": "2.5.0", "dc323e67f16f": "2.6.0", "ee0669bd1cc5": "2.7.0", "0717577d4573": "2.8.0",
+    "a12a3943b4bd": "3.0.0", "dcd71f646680": "3.0.1", "2541b1294d27": "3.0.2", "93ea575cb5d8": "3.1.0",
+    "755da8c3cf11": "3.2.0", "ac593985615e": "3.3.0", "24cb90801772": "3.4.0", "8f4b7f848644": "3.5.0",
+    "83b7061638ee": "3.5.1", "8e5e7e5ab8b3": "3.5.2", "c85c95e3d725": "3.5.3", "f43a0e5ff2bd": "3.6.0",
+    "a37ce9120846": "3.7.0", "1e31de5234b9": "4.0.0", "8ade135a41bc": "4.1.0", "b4ffde65f463": "4.1.1",
+    "9bb56186c3b0": "4.1.2", "1d96c772d194": "4.1.3", "0ad4b8fadaa2": "4.1.4", "44c2b7a8a4ea": "4.1.5",
+    "a5ac7e51b410": "4.1.6", "692973e3d937": "4.1.7", "d632683dd7b4": "4.2.0", "eef61447b9ff": "4.2.1",
+    "11bd71901bbe": "4.2.2", "08eba0b27e82": "4.3.0", "34e114876b0b": "4.3.1", "11d5960a3267": "4.4.0",
+    "08c6903cd8c0": "5.0.0", "93cb6efe1820": "5.0.1", "fbc6f3992d24": "5.1.0", "1af3b93b6815": "6.0.0",
+    "8e8c483db84b": "6.0.1", "de0fac2e4500": "6.0.2", "df4cb1c069e1": "6.0.3", "d23441a48e51": "6.1.0",
+    "9c091bb21b7c": "7.0.0", "3d3c42e5aac5": "7.0.1",
+}
+
 # actions/checkout releases that refuse fork checkouts: all published 2026-07-20 (v1 was not updated).
 GUARDED_FROM = {2: (2, 8, 0), 3: (3, 7, 0), 4: (4, 4, 0), 5: (5, 1, 0), 6: (6, 1, 0), 7: (7, 0, 1)}
 
@@ -230,9 +315,12 @@ def checkout_refuses(spec: str, raw_line: str = "") -> Optional[bool]:
         return True
     version = re.fullmatch(r"v?(\d+)(?:\.(\d+))?(?:\.(\d+))?", spec)
     if not version and re.fullmatch(r"[0-9a-f]{7,40}", spec):
-        comment = re.search(r"#\s*v?(\d+(?:\.\d+){0,2})\b", raw_line)
+        known = CHECKOUT_RELEASES.get(spec[:12]) if len(spec) >= 12 else None
+        if known:
+            return checkout_refuses(known)
+        comment = re.search(r"#\s*v?(\d+\.\d+(?:\.\d+)?)\b", raw_line)
         if not comment:
-            return None
+            return None                  # a commit pin without a full version could be any release
         version = re.fullmatch(r"v?(\d+)(?:\.(\d+))?(?:\.(\d+))?", comment.group(1))
     if not version:
         return None
@@ -266,6 +354,25 @@ def upstream_workflows(lines: List[str]) -> List[str]:
                 names.append(text.lstrip()[2:].strip().strip("\"'"))
         return names
     return []
+
+
+def workflow_run_branch_filter(lines: List[str]) -> bool:
+    """Whether the `workflow_run` trigger has a `branches:` filter. Fork pull requests reach such a workflow
+    only from a branch with a matching name (which a fork can choose, so it is no security boundary)."""
+    for number, raw in enumerate(lines):
+        match = re.match(r"^(\s*)workflow_run\s*:\s*$", _strip_comment(raw))
+        if not match:
+            continue
+        depth = len(match.group(1))
+        for below in lines[number + 1:]:
+            text = _strip_comment(below)
+            if not text.strip():
+                continue
+            if _indent(text) <= depth:
+                break
+            if re.match(r"^\s*branches\s*:", text):
+                return True
+    return False
 
 
 def workflow_name(path: str, lines: List[str]) -> str:
@@ -317,8 +424,8 @@ def analyse(name: str, text: str, pr_workflows: Optional[set] = None) -> Workflo
             f"after a review. {POLICY_CHANGELOG}")
 
     # A workflow_run workflow only meets fork code when a workflow it follows runs on pull requests.
-    fork_reachable = "pull_request_target" in events or pr_workflows is None or any(
-        w in pr_workflows for w in upstream_workflows(lines))
+    fork_reachable = "pull_request_target" in events or (not workflow_run_branch_filter(lines) and (
+        pr_workflows is None or any(w in pr_workflows for w in upstream_workflows(lines))))
 
     for number, raw in enumerate(lines):
         text_line = _strip_comment(raw)
@@ -332,7 +439,7 @@ def analyse(name: str, text: str, pr_workflows: Optional[set] = None) -> Workflo
             if not (FORK_REF_RE.search(ref) or FORK_REPO_RE.search(repo)) or not fork_reachable:
                 continue
             where = ref_line or repo_line or number + 1
-            if _guarded_for_forks(lines, block):
+            if _guarded_for_forks(lines, block, privileged):
                 continue
             refuses = checkout_refuses(uses.group(2), raw)
             if opted_in.lower() != "true" and refuses:
@@ -366,7 +473,8 @@ def analyse(name: str, text: str, pr_workflows: Optional[set] = None) -> Workflo
                 + ("It stops running on 2026-11-02 unless the trigger is allowed by an Actions policy. "
                    if "pull_request_target" in events else "")
                 + "Keep model output away from privileged steps: a pull request can steer an AI reviewer.")
-        if GIT_PR_FETCH_RE.search(text_line):
+        if (GIT_PR_FETCH_RE.search(text_line) and fork_reachable
+                and not _guarded_for_forks(lines, _block(lines, number), privileged)):
             add(number + 1, "warning", "PRT004",
                 "Fetches pull request code with git or gh in a privileged workflow. actions/checkout's guard "
                 "does not cover this, so fork code still reaches a job that " + (power or "has repository access")

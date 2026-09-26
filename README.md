@@ -70,6 +70,9 @@ A `workflow_run` workflow is checked only if a workflow it follows runs on pull 
 ## Limits
 
 - It reads YAML line by line, without a YAML library. Unusual layouts (anchors, multi-document files) can be missed.
+- It understands conditions that keep forks out: same-repository checks, Dependabot/Renovate-only jobs, jobs limited to non-privileged events, and `workflow_run.event == 'push'`. Other conditions, such as labels, are treated as letting forks through.
+- A `workflow_run` workflow with a `branches:` filter is treated as not reached by forks. A fork can still name its branch to match, so such a filter is not a security boundary.
+- Commit pins of `actions/checkout` are resolved against its releases up to 2026-09-26. A newer unknown commit counts as "may predate the guard".
 - It can't see your repository's Actions policies. If one already allows `pull_request_target`, PRT001 is informational.
 - AI actions are recognised by name, so a local or renamed action can be missed.
 - It never runs workflow code and makes no changes.

@@ -46,12 +46,20 @@ python prt_check.py --format json         # machine-readable
 | Code | Level | Meaning |
 |---|---|---|
 | PRT001 | warning | The workflow runs on `pull_request_target`. From 2026-11-02 it stops running unless an Actions policy allows the trigger. |
-| PRT002 | error | The workflow checks out fork code (the PR's head or merge SHA, `refs/pull/…`, or the fork repository) without the opt-in. The step already fails for every fork pull request. |
+| PRT002 | error | The workflow checks out fork code (the PR's head or merge SHA, `refs/pull/…`, or the fork repository) without the opt-in, using an `actions/checkout` that has the guard. That covers `@v2` to `@v7`, `@main`, and v2.8.0, v3.7.0, v4.4.0, v5.1.0, v6.1.0, v7.0.1 or later. The step already fails for every fork pull request. |
+| PRT006 | error or warning | The same checkout, but pinned to a version or commit from before 2026-07-20, or to v1. The guard doesn't apply, so fork code still runs in the privileged job. Fix the workflow before you update the pin: updating alone just makes the step fail. |
 | PRT003 | warning | The workflow opts in with `allow-unsafe-pr-checkout: true`. The report says whether it also has secrets, write permissions or later steps, which is how a "pwn request" happens. |
 | PRT004 | warning | The workflow fetches PR code with `git fetch …pull/…` or `gh pr checkout`. The guard in `actions/checkout` does not cover that. |
 | PRT005 | notice | An AI or review action runs in the privileged workflow. On `pull_request_target` it stops on 2026-11-02, and a pull request can steer its output. |
 
-The verdict for the repository is the most urgent of: *already failing for fork PRs*, *affected on 2026-11-02*, *review a privileged checkout*, or *not affected*.
+The verdict for the repository is the most urgent of:
+- *fork code in a privileged workflow* (PRT006);
+- *already failing for fork PRs*;
+- *affected on 2026-11-02*;
+- *review a privileged checkout*;
+- *not affected*.
+
+A `workflow_run` workflow is checked only if a workflow it follows runs on pull requests. Otherwise it never sees fork code.
 
 ## How to fix
 

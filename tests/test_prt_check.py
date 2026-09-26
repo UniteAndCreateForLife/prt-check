@@ -175,3 +175,41 @@ def test_a_step_or_job_that_skips_forks_does_not_fail():
                  "    steps:\n      - uses: actions/checkout@v4\n        with:\n"
                  "          ref: ${{ github.event.pull_request.head.sha }}\n")
     assert "PRT002" in [c for c, _, _ in codes(other_job)], "a guard on another job does not count"
+
+
+@pytest.mark.parametrize("spec, line, expected", [
+    ("v1", "", False), ("v2", "", True), ("v4", "", True), ("v4.2.2", "", False), ("v4.4.0", "", True),
+    ("v7.0.0", "", False), ("v7.0.1", "", True), ("v8", "", True), ("main", "", True),
+    ("11d5960a326750d5838078e36cf38b85af677262", "uses: actions/checkout@11d5960a3 ", None),
+    ("3d3c42e5aac5ba805825da76410c181273ba90b1", "uses: actions/checkout@3d3c42e5 # v7.0.1", True),
+    ("b4ffde65f46336ab88eb53be808477a3936bae11", "uses: actions/checkout@b4ffde65 # v4.1.1", False),
+])
+def test_which_checkout_versions_carry_the_guard(spec, line, expected):
+    assert P.checkout_refuses(spec, line) is expected
+
+
+def test_an_old_pin_still_checks_out_fork_code_and_is_the_most_urgent_finding():
+    text = checkout_workflow("          ref: ${{ github.event.pull_request.head.sha }}\n",
+                             after="      - run: npm ci && npm test\n        env:\n          TOKEN: ${{ secrets.DEPLOY }}\n"
+                             ).replace("actions/checkout@v4", "actions/checkout@v4.2.2")
+    found = [f for f in P.analyse("t.yml", text).findings if f.code in ("PRT002", "PRT006")]
+    assert [(f.code, f.level) for f in found] == [("PRT006", "error")]
+    assert "predates the guard" in found[0].message and "secrets.DEPLOY" in found[0].message
+    assert P.summarise([P.analyse("t.yml", text)])["verdict"] == "fork_code_in_privileged_workflow"
+
+
+def test_workflow_run_after_a_push_only_workflow_never_meets_fork_code():
+    build = "name: Nightly Build\non:\n  push:\n    branches: [main]\n  schedule:\n    - cron: '0 3 * * *'\njobs: {}\n"
+    deploy = ("on:\n  workflow_run:\n    workflows: ['Nightly Build']\n    types: [completed]\njobs:\n  d:\n"
+              "    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n        with:\n"
+              "          ref: ${{ github.event.workflow_run.head_sha }}\n")
+    reports = P.analyse_all([(".github/workflows/build.yml", build), (".github/workflows/deploy.yml", deploy)])
+    assert [f.code for r in reports for f in r.findings] == []
+    pr_build = build.replace("  push:\n", "  pull_request:\n  push:\n")
+    reports = P.analyse_all([(".github/workflows/build.yml", pr_build), (".github/workflows/deploy.yml", deploy)])
+    assert [f.code for r in reports for f in r.findings] == ["PRT002"]
+
+
+def test_block_list_of_upstream_workflows():
+    lines = "on:\n  workflow_run:\n    workflows:\n      - CI\n      - \"Docs build\"\n    types: [completed]\n".split("\n")
+    assert P.upstream_workflows(lines) == ["CI", "Docs build"]

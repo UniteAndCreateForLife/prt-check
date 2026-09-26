@@ -219,7 +219,77 @@ def _later_steps(lines: List[str], block_end: int, item_indent: int) -> bool:
     return False
 
 
-def analyse(name: str, text: str) -> WorkflowReport:
+# actions/checkout releases that refuse fork checkouts: all published 2026-07-20 (v1 was not updated).
+GUARDED_FROM = {2: (2, 8, 0), 3: (3, 7, 0), 4: (4, 4, 0), 5: (5, 1, 0), 6: (6, 1, 0), 7: (7, 0, 1)}
+
+
+def checkout_refuses(spec: str, raw_line: str = "") -> Optional[bool]:
+    """Whether actions/checkout@<spec> has the fork guard. None when a commit pin carries no version comment."""
+    spec = spec.strip()
+    if spec in ("main", "master"):
+        return True
+    version = re.fullmatch(r"v?(\d+)(?:\.(\d+))?(?:\.(\d+))?", spec)
+    if not version and re.fullmatch(r"[0-9a-f]{7,40}", spec):
+        comment = re.search(r"#\s*v?(\d+(?:\.\d+){0,2})\b", raw_line)
+        if not comment:
+            return None
+        version = re.fullmatch(r"v?(\d+)(?:\.(\d+))?(?:\.(\d+))?", comment.group(1))
+    if not version:
+        return None
+    major = int(version.group(1))
+    if major < 2:
+        return False
+    if major > max(GUARDED_FROM):
+        return True
+    if version.group(2) is None:
+        return True                      # a floating major tag picked up the backport
+    exact = (major, int(version.group(2)), int(version.group(3) or 0))
+    return exact >= GUARDED_FROM[major]
+
+
+def upstream_workflows(lines: List[str]) -> List[str]:
+    """The names listed under `on: workflow_run: workflows:`."""
+    for number, raw in enumerate(lines):
+        match = re.match(r"^\s*workflows\s*:(.*)$", _strip_comment(raw))
+        if not match:
+            continue
+        if match.group(1).strip():
+            return _flow_keys(match.group(1).strip())
+        names, depth = [], _indent(raw)
+        for below in lines[number + 1:]:
+            text = _strip_comment(below)
+            if not text.strip():
+                continue
+            if _indent(text) <= depth:
+                break
+            if text.lstrip().startswith("- "):
+                names.append(text.lstrip()[2:].strip().strip("\"'"))
+        return names
+    return []
+
+
+def workflow_name(path: str, lines: List[str]) -> str:
+    for raw in lines:
+        match = re.match(r"^name\s*:\s*(.+)$", _strip_comment(raw))
+        if match:
+            return match.group(1).strip().strip("\"'")
+    return path
+
+
+def analyse_all(files: List[Tuple[str, str]]) -> List[WorkflowReport]:
+    """Analyse a repository's workflow files together, so a workflow_run workflow knows whether the
+    workflows it follows run on pull requests."""
+    pr_workflows = set()
+    for path, text in files:
+        lines = text.replace("\r\n", "\n").split("\n")
+        if {"pull_request", "pull_request_target"} & set(triggers(lines)[0]):
+            pr_workflows |= {workflow_name(path, lines), path}
+    return [analyse(path, text, pr_workflows) for path, text in files]
+
+
+def analyse(name: str, text: str, pr_workflows: Optional[set] = None) -> WorkflowReport:
+    """One workflow file. Without ``pr_workflows`` (the names of the repository's pull-request-triggered
+    workflows), every workflow_run workflow is assumed to follow one."""
     lines = text.replace("\r\n", "\n").split("\n")
     events, on_line = triggers(lines)
     report = WorkflowReport(file=name, triggers=events)
@@ -246,6 +316,10 @@ def analyse(name: str, text: str) -> WorkflowReport:
             "workflow_run for steps that need write access), or allow the trigger in Settings > Actions > Policies "
             f"after a review. {POLICY_CHANGELOG}")
 
+    # A workflow_run workflow only meets fork code when a workflow it follows runs on pull requests.
+    fork_reachable = "pull_request_target" in events or pr_workflows is None or any(
+        w in pr_workflows for w in upstream_workflows(lines))
+
     for number, raw in enumerate(lines):
         text_line = _strip_comment(raw)
         uses = re.search(r"\buses\s*:\s*[\"']?([^\s\"'@]+)@?([^\s\"']*)", text_line)
@@ -255,17 +329,29 @@ def analyse(name: str, text: str) -> WorkflowReport:
             repo, repo_line = _value(block, "repository")
             opted_in, opt_line = _value(block, "allow-unsafe-pr-checkout")
             target = " ".join(x for x in (ref, repo) if x)
-            if not (FORK_REF_RE.search(ref) or FORK_REPO_RE.search(repo)):
+            if not (FORK_REF_RE.search(ref) or FORK_REPO_RE.search(repo)) or not fork_reachable:
                 continue
             where = ref_line or repo_line or number + 1
             if _guarded_for_forks(lines, block):
                 continue
-            if opted_in.lower() != "true":
+            refuses = checkout_refuses(uses.group(2), raw)
+            if opted_in.lower() != "true" and refuses:
                 add(where, "error", "PRT002",
                     f"Checks out pull request code ({target}) in a {'/'.join(privileged)} workflow. Since "
-                    "2026-07-20 actions/checkout refuses this for pull requests from forks, so this step fails "
-                    "for every fork PR. Do not add allow-unsafe-pr-checkout unless the code is only read as data; "
-                    f"prefer running untrusted code in a pull_request workflow. {CHECKOUT_CHANGELOG}")
+                    f"2026-07-20 actions/checkout@{uses.group(2)} refuses this for pull requests from forks, so this "
+                    "step fails for every fork PR. Do not add allow-unsafe-pr-checkout unless the code is only read "
+                    f"as data; prefer running untrusted code in a pull_request workflow. {CHECKOUT_CHANGELOG}")
+            elif opted_in.lower() != "true":
+                later = _later_steps(lines, block[-1][0] + 1, _indent(lines[block[0][0]]))
+                pinned = (f"actions/checkout@{uses.group(2)} predates the guard" if refuses is False else
+                          f"actions/checkout is pinned to {uses.group(2)[:12]}, which may predate the guard")
+                add(where, "error" if later and power else "warning", "PRT006",
+                    f"Checks out pull request code ({target}) in a {'/'.join(privileged)} workflow, and {pinned} "
+                    "(2026-07-20), so fork code still gets checked out here" +
+                    (f"; the workflow {power}" if power else "") +
+                    ("; later steps run after the checkout" if later else "") +
+                    ". Fix the workflow first: updating the pin alone makes the step fail for fork PRs. "
+                    f"{SECURE_GUIDE}")
             else:
                 later = _later_steps(lines, block[-1][0] + 1, _indent(lines[block[0][0]]))
                 add(opt_line or where, "warning", "PRT003",
@@ -291,7 +377,9 @@ def analyse(name: str, text: str) -> WorkflowReport:
 def summarise(reports: List[WorkflowReport]) -> Dict[str, object]:
     findings = [f for r in reports for f in r.findings]
     codes = {f.code for f in findings}
-    if "PRT002" in codes:
+    if "PRT006" in codes:
+        verdict = "fork_code_in_privileged_workflow"
+    elif "PRT002" in codes:
         verdict = "failing_for_fork_prs"
     elif "PRT001" in codes:
         verdict = "affected_on_2026_11_02"
@@ -305,6 +393,7 @@ def summarise(reports: List[WorkflowReport]) -> Dict[str, object]:
 
 
 VERDICT_TEXT = {
+    "fork_code_in_privileged_workflow": "Checks out fork code in a privileged workflow with a pinned actions/checkout that predates the 2026-07-20 guard: fix this first.",
     "failing_for_fork_prs": "Already failing for fork pull requests (actions/checkout refuses the checkout since 2026-07-20).",
     "affected_on_2026_11_02": "Affected on 2026-11-02: pull_request_target workflows stop running without an allowing Actions policy.",
     "review_privileged_checkout": "Runs fork code in a privileged workflow: review before 2026-11-02.",
@@ -369,7 +458,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     except (OSError, ValueError, urllib.error.URLError) as exc:
         print(f"prt-check: cannot read workflows: {exc}", file=sys.stderr)
         return 2
-    reports = [analyse(name, text) for name, text in files]
+    reports = analyse_all(files)
     summary = summarise(reports)
     source = args.repo or str(Path(args.path).resolve().name)
     if args.format == "json":

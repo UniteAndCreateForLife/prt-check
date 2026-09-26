@@ -97,15 +97,33 @@ def scan(repo: dict) -> dict:
                 "summary": P.summarise([]), "prt_actions": [], "ai_on_prt": [], "codes": []}
 
 
-def _scan(repo: dict) -> dict:
+CACHE: Path = Path("scan-results") / "files"
+
+
+def _fetch(repo: dict) -> list:
+    """(path, text) of the repository's workflow files, cached under CACHE so re-analysis is offline."""
+    folder = CACHE / repo["full_name"].replace("/", "__")
+    if (folder / ".complete").exists():
+        return [(f".github/workflows/{f.name}", f.read_text(encoding="utf-8"))
+                for f in sorted(folder.iterdir()) if f.name != ".complete"]
     listing = api(f"repos/{repo['full_name']}/contents/.github/workflows")
     files = [item for item in (listing if isinstance(listing, list) else [])
              if item.get("type") == "file" and str(item.get("name", "")).endswith((".yml", ".yaml"))]
-    reports, prt_actions = [], []
+    folder.mkdir(parents=True, exist_ok=True)
+    out = []
     for item in files:
         text = raw(item["download_url"]) if item.get("download_url") else ""
-        report = P.analyse(f".github/workflows/{item['name']}", text)
-        reports.append(report)
+        (folder / item["name"]).write_text(text, encoding="utf-8")
+        out.append((f".github/workflows/{item['name']}", text))
+    (folder / ".complete").write_text("", encoding="utf-8")
+    return out
+
+
+def _scan(repo: dict) -> dict:
+    files = _fetch(repo)
+    reports = P.analyse_all(files)
+    prt_actions = []
+    for (path, text), report in zip(files, reports):
         if "pull_request_target" in report.triggers:
             prt_actions += sorted({m.group(1).lower() for m in USES_RE.finditer(text)})
     summary = P.summarise(reports)
@@ -122,6 +140,7 @@ def aggregate(rows: list, top: int) -> dict:
     with_workflows = [r for r in rows if r["workflows"]]
     uses_prt = [r for r in rows if r["summary"]["pull_request_target_workflows"]]
     failing = [r for r in rows if "PRT002" in r["codes"]]
+    old_pin = [r for r in rows if "PRT006" in r["codes"]]
     opted_in = [r for r in rows if "PRT003" in r["codes"]]
     git_fetch = [r for r in rows if "PRT004" in r["codes"]]
     ai_prt = [r for r in rows if r["ai_on_prt"]]
@@ -136,6 +155,7 @@ def aggregate(rows: list, top: int) -> dict:
         "use_pull_request_target": len(uses_prt), "use_pull_request_target_pct": share(len(uses_prt), len(rows)),
         "pull_request_target_workflow_files": sum(r["summary"]["pull_request_target_workflows"] for r in rows),
         "failing_for_fork_prs": len(failing), "failing_for_fork_prs_pct": share(len(failing), len(rows)),
+        "fork_code_with_old_checkout_pin": len(old_pin),
         "opted_in_unsafe_checkout": len(opted_in),
         "git_fetch_of_pr_code_in_privileged_workflow": len(git_fetch),
         "ai_or_review_action_on_pull_request_target": len(ai_prt),
@@ -153,7 +173,14 @@ def main() -> int:
     parser.add_argument("--workers", type=int, default=6)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
-    repos = top_repositories(args.top)
+    global CACHE
+    CACHE = args.out / "files"
+    listed = args.out / "top_repositories.json"
+    if listed.exists():
+        repos = json.loads(listed.read_text(encoding="utf-8"))
+    else:
+        repos = top_repositories(args.top)
+        listed.write_text(json.dumps(repos), encoding="utf-8")
     rows = []
     with ThreadPoolExecutor(max_workers=args.workers) as pool, \
             open(args.out / "repos.jsonl", "w", encoding="utf-8") as handle:

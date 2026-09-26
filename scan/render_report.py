@@ -31,6 +31,10 @@ def render(data: dict) -> str:
         f"- **{data['failing_for_fork_prs']} ({data['failing_for_fork_prs_pct']}%)** check out fork pull request code "
         "in a privileged workflow without the new opt-in. Since 2026-07-20 `actions/checkout` refuses that, so "
         "these steps already fail for every pull request from a fork.",
+        f"- **{data.get('fork_code_with_old_checkout_pin', 0)}** check out fork code in a privileged workflow with "
+        "`actions/checkout` pinned to a version or commit from before the guard. The guard doesn't apply to "
+        "them, so the fork's code is checked out where the workflow's token and secrets are. They are the most "
+        "urgent to fix, and this report does not name them.",
         f"- **{data['opted_in_unsafe_checkout']}** opted in with `allow-unsafe-pr-checkout: true`: a deliberate "
         "decision, safe only if no later step executes the fork's files.",
         f"- **{data['git_fetch_of_pr_code_in_privileged_workflow']}** fetch pull request code with `git fetch "

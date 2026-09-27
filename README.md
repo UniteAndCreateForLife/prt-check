@@ -2,6 +2,8 @@
 
 **Is your repository ready for GitHub's 2026 `pull_request_target` changes?** One command or one Action step tells you, workflow by workflow, with the line to fix.
 
+**Check a public repository in your browser:** https://uniteandcreateforlife.github.io/prt-check/ (no signup; it runs on your device with the same rules as the CLI).
+
 Two changes break GitHub Actions workflows on public repositories this year:
 
 | Date | Change | What breaks |

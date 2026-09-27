@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Is your repo ready for Nov 2? · prt-check</title>
+<meta name="description" content="Paste a public GitHub repository and see, in seconds, which workflows GitHub's 2026 pull_request_target changes break. Runs in your browser; free; no signup.">
+<meta property="og:title" content="Is your repo ready for Nov 2?">
+<meta property="og:description" content="Free check for GitHub's 2026 pull_request_target changes. Paste a repo, get a report in seconds.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23d9a400'/%3E%3Cpath d='M9 17l5 5 9-12' stroke='%2314171c' stroke-width='3.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+:root {
+  --bg: #f6f5f1; --panel: #ffffff; --ink: #14171c; --muted: #5d6470; --line: #dcd9d0;
+  --amber: #b07d00; --amber-bg: #fff4d6; --red: #b3261e; --red-bg: #fde7e4; --teal: #0f7a6c; --teal-bg: #dff3ef;
+  --blue: #1d5bbf; --code-bg: #efece4; --shadow: 0 1px 2px rgb(20 23 28 / .06), 0 8px 24px -12px rgb(20 23 28 / .18);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111317; --panel: #191c22; --ink: #e9e7e1; --muted: #9aa1ad; --line: #2c3038;
+    --amber: #f0c24a; --amber-bg: #2d2511; --red: #ff8a7f; --red-bg: #3a1b18; --teal: #5fd3c0; --teal-bg: #0f2d29;
+    --blue: #8ab4ff; --code-bg: #22262e; --shadow: 0 1px 2px rgb(0 0 0 / .3), 0 8px 24px -12px rgb(0 0 0 / .6);
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 880px; margin: 0 auto; padding: 40px 18px 64px; }
+a { color: var(--blue); }
+code, pre, .mono { font-family: ui-monospace, "SFMono-Regular", "JetBrains Mono", Consolas, monospace; font-size: .92em; }
+.eyebrow { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; font-size: 13px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.countdown { background: var(--amber-bg); color: var(--amber); border-radius: 999px; padding: 3px 11px; letter-spacing: .02em; }
+h1 { font-size: clamp(32px, 6vw, 50px); line-height: 1.06; margin: 14px 0 12px; letter-spacing: -.02em; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); max-width: 64ch; margin: 0 0 26px; }
+.lede b { color: var(--ink); font-weight: 650; }
+form { display: flex; gap: 10px; flex-wrap: wrap; }
+input[type=text] { flex: 1 1 320px; min-width: 0; font: inherit; font-size: 17px; padding: 13px 15px; border-radius: 12px; border: 1.5px solid var(--line); background: var(--panel); color: var(--ink); }
+input[type=text]:focus { outline: none; border-color: var(--blue); }
+button { font: inherit; font-weight: 650; border-radius: 12px; border: 0; cursor: pointer; }
+.primary { background: var(--ink); color: var(--bg); padding: 13px 22px; font-size: 17px; }
+.primary:disabled { opacity: .55; cursor: progress; }
+.secondary { background: transparent; color: var(--ink); border: 1.5px solid var(--line); padding: 7px 13px; font-size: 14px; }
+.hints { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 0; font-size: 14px; color: var(--muted); align-items: center; }
+.chip { background: var(--code-bg); color: var(--ink); padding: 5px 11px; font-size: 13.5px; font-weight: 550; }
+.status { margin: 22px 0 0; min-height: 24px; color: var(--muted); }
+.status.error { color: var(--red); }
+.report { margin-top: 18px; display: grid; gap: 14px; }
+.verdict { border-radius: 16px; padding: 18px 20px; background: var(--panel); box-shadow: var(--shadow); border-left: 6px solid var(--teal); }
+.verdict.warn { border-left-color: var(--amber); }
+.verdict.bad { border-left-color: var(--red); }
+.verdict h2 { margin: 0 0 6px; font-size: 21px; line-height: 1.3; text-wrap: balance; }
+.meta { color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.finding { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; display: grid; gap: 6px; }
+.finding-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.badge { font-size: 12px; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; border-radius: 6px; padding: 2px 8px; }
+.badge.error { background: var(--red-bg); color: var(--red); }
+.badge.warning { background: var(--amber-bg); color: var(--amber); }
+.badge.notice { background: var(--code-bg); color: var(--muted); }
+.finding-title { font-weight: 650; }
+.where { font-size: 14px; overflow-wrap: anywhere; }
+.msg { color: var(--muted); font-size: 14.5px; overflow-wrap: anywhere; }
+.next { background: var(--panel); border-radius: 16px; padding: 18px 20px; box-shadow: var(--shadow); }
+.next h3 { margin: 0 0 8px; font-size: 17px; }
+.next-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+pre { background: var(--code-bg); border-radius: 10px; padding: 12px 14px; overflow-x: auto; margin: 8px 0 0; font-size: 13px; line-height: 1.5; }
+section.about { margin-top: 46px; display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+section.about h3 { margin: 0 0 6px; font-size: 16px; }
+section.about p { margin: 0; color: var(--muted); font-size: 15px; }
+footer { margin-top: 42px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow"><span>prt-check · free · open source</span><span class="countdown" id="countdown">GitHub changes the default on Nov 2, 2026</span></div>
+  <h1>Is your repo ready for Nov&nbsp;2?</h1>
+  <p class="lede">From <b>November 2, 2026</b>, GitHub blocks <code>pull_request_target</code> on public repositories unless an Actions policy allows it, and since <b>July 20</b> <code>actions/checkout</code> refuses to check out fork pull requests in those workflows. Paste a public repository to see which of its workflows are affected and what to do.</p>
+
+  <form id="form" autocomplete="off">
+    <label for="repo" hidden>Repository</label>
+    <input id="repo" type="text" placeholder="owner/name or a GitHub URL" spellcheck="false" autocapitalize="off" required>
+    <button class="primary" id="go" type="submit">Check</button>
+  </form>
+  <div class="hints">Try:
+    <button class="chip" type="button" data-repo="UniteAndCreateForLife/prt-check">UniteAndCreateForLife/prt-check</button>
+    <button class="chip" type="button" id="sample">A sample with problems (offline)</button>
+  </div>
+
+  <p class="status" id="status" role="status" aria-live="polite"></p>
+  <div class="report" id="report" hidden></div>
+
+  <section class="about">
+    <div><h3>Runs in your browser</h3><p>This page reads the repository's workflow files from GitHub and analyses them on your device. There's no server of ours in between and nothing is stored.</p></div>
+    <div><h3>Same rules as the CLI</h3><p>Identical to <code>prt-check</code> <span id="version"></span>, and tested against the Python CLI on 9,328 workflows from the 1,000 most-starred repositories: same findings, same lines.</p></div>
+    <div><h3>What it can't see</h3><p>It reads workflow files only. It can't see your repository's Actions policies, and it can't tell whether a flagged workflow is still needed. Every finding points to a line to review.</p></div>
+  </section>
+
+  <footer>
+    <span>By <a href="https://github.com/UniteAndCreateForLife/HAL_SUPREME/blob/main/docs/WORK_WITH_HAL.md">HAL SUPREME</a></span>
+    <a href="https://github.com/UniteAndCreateForLife/prt-check">Source and CLI</a>
+    <a href="https://github.blog/changelog/2026-09-17-workflow-execution-protections-in-github-actions-generally-available/">GitHub: Nov 2 change</a>
+    <a href="https://github.blog/changelog/2026-06-18-safer-pull_request_target-defaults-for-github-actions-checkout/">GitHub: checkout change</a>
+    <a href="https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target">Securing pull_request_target</a>
+  </footer>
+</main>
+<noscript><p style="text-align:center">This checker needs JavaScript. The same check runs locally: <code>pipx run --spec git+https://github.com/UniteAndCreateForLife/prt-check prt-check --repo OWNER/NAME</code></p></noscript>
+<script type="module" src="./app.mjs"></script>
+</body>
+</html>

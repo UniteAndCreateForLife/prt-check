@@ -35,3 +35,23 @@ def test_raw_raises_instead_of_returning_empty_text(monkeypatch):
     monkeypatch.setattr(S.time, "sleep", lambda seconds: None)
     with pytest.raises(RuntimeError, match="could not download"):
         S.raw("https://example.invalid/w.yml")
+
+
+def test_only_a_failure_at_the_checkout_step_counts_as_evidence():
+    runs = {"workflow_runs": [
+        {"id": 1, "html_url": "run-1", "created_at": "2026-09-24", "conclusion": "failure",
+         "head_repository": {"full_name": "someone/fork"}},
+        {"id": 2, "html_url": "run-2", "created_at": "2026-08-27", "conclusion": "failure",
+         "head_repository": {"full_name": "other/fork"}},
+    ]}
+    jobs = {1: {"jobs": [{"steps": [{"name": "Set up job", "conclusion": "success"},
+                                    {"name": "Run tests", "conclusion": "failure"}]}]},
+            2: {"jobs": [{"steps": [{"name": "Run actions/checkout@v4", "conclusion": "failure"}]}]}}
+
+    def api(path):
+        if "/jobs" in path:
+            return jobs[int(path.split("/runs/")[1].split("/")[0])]
+        return runs
+
+    found = W.failed_fork_run("o/r", "ci.yml", api=api)
+    assert found == {"run": "run-2", "at": "2026-08-27", "failed_step": "Run actions/checkout@v4"}

@@ -27,13 +27,21 @@ import scan_top_repos as S  # noqa: E402
 GUARD_DATE = "2026-07-20"
 
 
-def failed_fork_run(repo: str, workflow: str) -> dict | None:
-    """The newest failed run of `workflow` for a fork PR since the checkout guard, if any."""
-    runs = S.api(f"repos/{repo}/actions/workflows/{workflow}/runs?per_page=30&created=%3E%3D{GUARD_DATE}") or {}
+def failed_fork_run(repo: str, workflow: str, api=None) -> dict | None:
+    """The newest fork-PR run of `workflow` since the checkout guard that failed AT a checkout step, if any.
+
+    A run that failed for another reason (a flaky test, a cancelled job) is not evidence of the guard."""
+    api = api or S.api
+    runs = api(f"repos/{repo}/actions/workflows/{workflow}/runs?per_page=30&created=%3E%3D{GUARD_DATE}") or {}
     for run in runs.get("workflow_runs", []):
         head = (run.get("head_repository") or {}).get("full_name")
-        if head and head != repo and run.get("conclusion") == "failure":
-            return {"run": run.get("html_url"), "at": run.get("created_at")}
+        if not head or head == repo or run.get("conclusion") != "failure":
+            continue
+        jobs = (api(f"repos/{repo}/actions/runs/{run.get('id')}/jobs") or {}).get("jobs", [])
+        step = next((s.get("name") for j in jobs for s in j.get("steps") or []
+                     if s.get("conclusion") == "failure" and "checkout" in str(s.get("name")).lower()), None)
+        if step:
+            return {"run": run.get("html_url"), "at": run.get("created_at"), "failed_step": step}
     return None
 
 

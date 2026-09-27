@@ -37,7 +37,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 CHECKOUT_CHANGELOG = "https://github.blog/changelog/2026-06-18-safer-pull_request_target-defaults-for-github-actions-checkout/"
 POLICY_CHANGELOG = "https://github.blog/changelog/2026-09-17-workflow-execution-protections-in-github-actions-generally-available/"

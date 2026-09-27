@@ -1,0 +1,8 @@
+- id: prt-check
+  name: prt-check (pull_request_target readiness)
+  description: Finds workflows hit by GitHub's 2026 pull_request_target changes.
+  entry: prt-check
+  language: python
+  files: ^\.github/workflows/.*\.ya?ml$
+  pass_filenames: false
+  args: [--fail-on, warning]

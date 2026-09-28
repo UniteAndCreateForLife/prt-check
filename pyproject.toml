@@ -20,15 +20,19 @@ classifiers = [
     "Topic :: Software Development :: Quality Assurance",
 ]
 
+[project.optional-dependencies]
+discord = ["discord.py==2.7.1"]
+
 [project.urls]
 Homepage = "https://github.com/UniteAndCreateForLife/prt-check"
 Report = "https://github.com/UniteAndCreateForLife/prt-check/blob/main/REPORT.md"
 
 [project.scripts]
 prt-check = "prt_check:main"
+prt-check-discord = "prt_discord:main"
 
 [tool.setuptools]
-py-modules = ["prt_check"]
+py-modules = ["prt_check", "prt_discord"]
 
 [tool.setuptools.dynamic]
 version = { attr = "prt_check.__version__" }
